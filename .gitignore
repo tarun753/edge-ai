@@ -1,0 +1,14 @@
+node_modules/
+__pycache__/
+venv/
+.env
+.env.local
+.DS_Store
+*.pyc
+dist/
+build/
+.next/
+frontend/.next/
+frontend/node_modules/
+*.log
+application_default_credentials.json
