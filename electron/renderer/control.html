@@ -290,6 +290,8 @@ function setStatus(s) {
   document.getElementById('btnStop').style.display=live?'block':'none';
   document.getElementById('hint').style.display=live?'block':'none';
   document.getElementById('caps').style.display=(live||conn)?'flex':'none';
+  // Notify tray icon about session status
+  window.edge.setSessionStatus(live?'live':'idle');
 }
 function setCap(id,on){const e=document.getElementById(id);if(on)e.classList.add('on');else e.classList.remove('on');}
 function showInfo(m){const e=document.getElementById('infoBox');e.textContent=m;e.style.display=m?'block':'none';}
@@ -391,6 +393,11 @@ document.getElementById('btnLive').addEventListener('click',startLive);
 document.getElementById('btnDemo').addEventListener('click',startDemo);
 document.getElementById('btnStop').addEventListener('click',stop);
 window.edge.onTriggerDemo(()=>pushLog(DEMO[demoIdx++%DEMO.length]));
+
+// Tray menu bar commands
+window.edge.onTrayStartLive(()=>startLive());
+window.edge.onTrayStartDemo(()=>startDemo());
+window.edge.onTrayStop(()=>stop());
 </script>
 </body>
 </html>

@@ -1,8 +1,9 @@
-const { app, BrowserWindow, ipcMain, systemPreferences, screen, globalShortcut, session, desktopCapturer } = require('electron');
+const { app, BrowserWindow, ipcMain, systemPreferences, screen, globalShortcut, session, desktopCapturer, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 
 let overlayWin = null;
 let controlWin = null;
+let tray = null;
 
 function createOverlay() {
   const { width, height } = screen.getPrimaryDisplay().workAreaSize;
@@ -39,24 +40,123 @@ function createControl() {
     const allowed = ['media', 'microphone', 'display-capture', 'screen'];
     callback(allowed.includes(permission));
   });
-
-  // Also handle permission checks (not just requests)
   controlWin.webContents.session.setPermissionCheckHandler((wc, permission) => {
     const allowed = ['media', 'microphone', 'display-capture', 'screen'];
     return allowed.includes(permission);
   });
 
   controlWin.loadFile(path.join(__dirname, 'renderer', 'control.html'));
+
+  controlWin.on('close', (e) => {
+    // Hide instead of close so tray can reopen it
+    if (!app.isQuitting) {
+      e.preventDefault();
+      controlWin.hide();
+    }
+  });
+}
+
+// ─── Tray Icon (menu bar) ───
+function createTray() {
+  // Create a 22x22 template image for macOS menu bar (white on transparent)
+  const iconSize = 22;
+  const canvas = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${iconSize}" height="${iconSize}" viewBox="0 0 22 22">
+      <rect x="3" y="3" width="16" height="16" rx="4" fill="none" stroke="white" stroke-width="1.5"/>
+      <text x="11" y="15" text-anchor="middle" font-family="Arial" font-weight="900" font-size="11" fill="white">E</text>
+    </svg>`;
+
+  // Use a simple nativeImage approach — create from dataURL
+  const img = nativeImage.createFromDataURL(
+    'data:image/svg+xml;base64,' + Buffer.from(canvas).toString('base64')
+  );
+  img.setTemplateImage(true);
+
+  tray = new Tray(img);
+  tray.setToolTip('EDGE — Conversation Intelligence');
+
+  const updateMenu = (isLive = false) => {
+    const contextMenu = Menu.buildFromTemplate([
+      {
+        label: isLive ? '🟢 EDGE is Live' : '⚫ EDGE — Idle',
+        enabled: false,
+      },
+      { type: 'separator' },
+      {
+        label: '🎯 Start Live Session',
+        enabled: !isLive,
+        click: () => {
+          showControlWindow();
+          if (controlWin) controlWin.webContents.send('tray-start-live');
+        },
+      },
+      {
+        label: '▶️ Demo Mode',
+        enabled: !isLive,
+        click: () => {
+          showControlWindow();
+          if (controlWin) controlWin.webContents.send('tray-start-demo');
+        },
+      },
+      {
+        label: '⏹ End Session',
+        enabled: isLive,
+        click: () => {
+          if (controlWin) controlWin.webContents.send('tray-stop');
+        },
+      },
+      { type: 'separator' },
+      {
+        label: 'Show Control Panel',
+        click: () => showControlWindow(),
+      },
+      {
+        label: 'Hide Overlay',
+        click: () => {
+          if (overlayWin && !overlayWin.isDestroyed()) overlayWin.webContents.send('hide');
+        },
+      },
+      { type: 'separator' },
+      {
+        label: 'Quit EDGE',
+        click: () => { app.isQuitting = true; app.quit(); },
+      },
+    ]);
+    tray.setContextMenu(contextMenu);
+  };
+
+  updateMenu(false);
+  tray.on('click', () => showControlWindow());
+
+  // Listen for status updates from renderer to update tray menu
+  ipcMain.on('session-status', (_, status) => {
+    updateMenu(status === 'live');
+    tray.setToolTip(status === 'live' ? 'EDGE — Live Session' : 'EDGE — Idle');
+  });
+}
+
+function showControlWindow() {
+  if (!controlWin || controlWin.isDestroyed()) {
+    createControl();
+  }
+  controlWin.show();
+  controlWin.focus();
 }
 
 app.whenReady().then(async () => {
-  // Try to pre-prompt macOS mic access (non-blocking — getUserMedia handles it in renderer)
+  // Try to pre-prompt macOS mic access
   if (process.platform === 'darwin') {
     try { await systemPreferences.askForMediaAccess('microphone'); } catch {}
   }
 
+  // Hide dock icon on macOS so it's a clean menu bar app
+  if (process.platform === 'darwin') {
+    app.dock.setIcon(nativeImage.createEmpty());
+  }
+
   createControl();
   createOverlay();
+  createTray();
 
   // Cmd+Shift+Space triggers next whisper
   globalShortcut.register('CommandOrControl+Shift+Space', () => {
